@@ -5,7 +5,6 @@ import dev.openrune.definition.type.widget.ComponentType
 import dev.openrune.types.ItemServerType
 import dev.openrune.types.aconverted.interf.IfButtonOp
 import dev.openrune.types.aconverted.interf.IfSubType
-import dev.openrune.util.Coord
 import org.rsmod.api.player.protect.ProtectedAccess
 import org.rsmod.events.EventBus
 import org.rsmod.events.KeyedEvent
@@ -47,7 +46,6 @@ public data class IfModalButton(
     override val id: Long = component.packed.toLong()
 }
 
-
 public data class IfOverlayScriptTrigger(
     val component: ComponentType,
     val comsub: Int,
@@ -58,7 +56,6 @@ public data class IfOverlayScriptTrigger(
     override val id: Long = component.packed.toLong()
 }
 
-
 public data class IfOverlayButton(
     val component: ComponentType,
     val comsub: Int,
@@ -67,6 +64,17 @@ public data class IfOverlayButton(
 ) : SuspendEvent<ProtectedAccess> {
     override val id: Long = component.packed.toLong()
 }
+
+/**
+ * Published alongside every [IfOverlayButton], for scripts that need to observe a button that
+ * another script already handles (such as the toplevel side stones).
+ */
+public data class IfOverlayButtonPressed(
+    val player: Player,
+    val component: ComponentType,
+    val comsub: Int,
+    val op: IfButtonOp,
+) : UnboundEvent
 
 public data class IfModalSubOpMenu(
     val component: ComponentType,

@@ -28,6 +28,9 @@ gameplay:
   # "Disabled": no level-up interface, but the message, fireworks and jingle still play. true starts
   # it at "Show level only", as on live. Players can change it in the settings either way.
   level-up-popups: false
+  # true starts new main-mode accounts on Tutorial Island instead of the realm spawn. Only part of
+  # the tutorial is implemented so far; see docs/tutorial-island.md.
+  tutorial-island: false
   quest-requirements:
     # Temporary core-mechanics default. Use "respect-progress" when quest gates should use real
     # quest state, or "virtual-completions" for league-style profiles.

@@ -21,10 +21,13 @@ import org.rsmod.content.skills.smithing.util.SmithingData
 import org.rsmod.content.skills.smithing.util.SmithingProductMeta
 import org.rsmod.content.skills.smithing.util.SmithingUtils
 import org.rsmod.content.skills.smithing.util.SmithingUtils.hasHammer
+import org.rsmod.events.EventBus
 import org.rsmod.plugin.scripts.PluginScript
 import org.rsmod.plugin.scripts.ScriptContext
 
-class AnvilSmithingScript @Inject constructor(private val xpMods: XpModifiers) : PluginScript() {
+class AnvilSmithingScript
+@Inject
+constructor(private val xpMods: XpModifiers, private val eventBus: EventBus) : PluginScript() {
 
     private val hammers = setOf(
         "obj.hammer",
@@ -213,6 +216,7 @@ class AnvilSmithingScript @Inject constructor(private val xpMods: XpModifiers) :
             spam(forgedMessage(meta))
             val xp = meta.barCount * meta.bar.smithxp * xpMods.get(player, "stat.smithing")
             statAdvance("stat.smithing", xp.toDouble())
+            eventBus.publish(AnvilSmithed(player, meta.product))
         }
     }
 

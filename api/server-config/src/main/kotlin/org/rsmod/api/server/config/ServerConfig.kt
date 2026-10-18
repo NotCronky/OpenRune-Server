@@ -53,6 +53,8 @@ public data class GameplayConfig(
     val dropRates: DropRatesYaml = DropRatesYaml(),
     @JsonProperty("level-up-popups")
     val levelUpPopups: Boolean = false,
+    @JsonProperty("tutorial-island")
+    val tutorialIsland: Boolean = false,
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)

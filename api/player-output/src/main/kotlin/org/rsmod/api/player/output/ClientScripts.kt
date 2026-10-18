@@ -60,6 +60,21 @@ public object ClientScripts {
 
     public fun highlightingOn(player: Player): Unit = player.runClientScript(5487)
 
+    public fun mesOverlay(player: Player, text: String): Unit = player.runClientScript(1974, text)
+
+    public fun tutorialOverlayHint(player: Player, hint: Int): Unit =
+        player.runClientScript(2584, hint)
+
+    public fun invHighlightItemOn(player: Player, obj: String, style: String, lifetime: Int = 0): Unit =
+        player.runClientScript(
+            8461,
+            obj.asRSCM(RSCMType.OBJ),
+            style.asRSCM(RSCMType.DBROW),
+            lifetime,
+        )
+
+    public fun invHighlightClearAll(player: Player): Unit = player.runClientScript(8465)
+
     public fun camForceAngle(player: Player, rate: Int, rate2: Int): Unit =
         player.runClientScript(143, rate, rate2)
 
