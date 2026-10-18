@@ -14,11 +14,14 @@ import org.rsmod.api.account.loader.request.AccountLoadResponse
 import org.rsmod.api.account.loader.request.isNewAccount
 import org.rsmod.api.net.central.OpenRuneCentralWorldLink
 import org.rsmod.api.player.vars.boolVarBit
+import org.rsmod.api.player.vars.intVarp
 import org.rsmod.api.realm.Realm
 import org.rsmod.api.registry.account.AccountRegistry
 import org.rsmod.api.registry.player.PlayerRegistry
 import org.rsmod.api.registry.player.isSuccess
 import org.rsmod.api.registry.region.RegionRegistry
+import org.rsmod.content.other.playerbots.spawn.BotProfile
+import org.rsmod.content.other.playerbots.spawn.BotSpawner
 import org.rsmod.events.EventBus
 import org.rsmod.game.entity.Player
 import org.rsmod.game.entity.player.SessionStateEvent
@@ -45,6 +48,7 @@ constructor(
     private val input: BotInput,
     private val openRuneCentral: OpenRuneCentralWorldLink,
     private val accounts: BotAccounts,
+    private val spawner: BotSpawner,
 ) {
     private val logger = InlineLogger()
 
@@ -61,6 +65,7 @@ constructor(
     }
 
     private var Player.newAccount by boolVarBit("varbit.new_player_account")
+    private var Player.tutorialStage by intVarp("varp.tutorial")
 
     sealed class Result {
         data class Ok(val player: Player) : Result()
@@ -70,8 +75,16 @@ constructor(
 
     fun isLoggingIn(accountName: String): Boolean = accountName.lowercase() in inFlight
 
-    /** [callback] always runs on the game thread. New accounts start at [spawn]. */
-    fun login(accountName: String, spawn: CoordGrid, callback: (Result) -> Unit) {
+    /**
+     * [callback] always runs on the game thread. New accounts start at [spawn]. With a [profile]
+     * the account must be new: it is applied once, and an existing account fails as [NAME_TAKEN].
+     */
+    fun login(
+        accountName: String,
+        spawn: CoordGrid,
+        profile: BotProfile? = null,
+        callback: (Result) -> Unit,
+    ) {
         val name = accountName.lowercase()
         if (!inFlight.add(name)) {
             callback(Result.Failed("already logging in"))
@@ -83,7 +96,7 @@ constructor(
                 name,
                 { claimNewAccount(name) },
             ) { response ->
-                onLoaded(name, spawn, response, callback)
+                onLoaded(name, accountName.trim(), spawn, profile, response, callback)
             }
         if (!queued) {
             inFlight.remove(name)
@@ -101,13 +114,16 @@ constructor(
     /** Loader thread. */
     private fun onLoaded(
         name: String,
+        displayName: String,
         spawn: CoordGrid,
+        profile: BotProfile?,
         response: AccountLoadResponse,
         callback: (Result) -> Unit,
     ) {
         val failure =
             when {
                 response !is AccountLoadResponse.Ok -> "account load failed ($response)"
+                profile != null && !response.isNewAccount() -> NAME_TAKEN
                 response is AccountLoadResponse.Ok.LoadAccount && !accounts.contains(name) ->
                     "'$name' is a real player's account"
                 else -> null
@@ -117,9 +133,9 @@ constructor(
             return
         }
         try {
-            val player = createPlayer(response, spawn)
+            val player = createPlayer(response, spawn, displayName.takeIf { profile != null })
             accountRegistry.queueLogin(player, response) { queued, ok ->
-                enterWorld(queued, ok, callback)
+                enterWorld(queued, ok, profile, callback)
             }
         } catch (e: Exception) {
             logger.error(e) { "Could not queue bot login: $name" }
@@ -127,11 +143,16 @@ constructor(
         }
     }
 
-    private fun createPlayer(response: AccountLoadResponse.Ok, spawn: CoordGrid): Player {
+    private fun createPlayer(
+        response: AccountLoadResponse.Ok,
+        spawn: CoordGrid,
+        displayName: String?,
+    ): Player {
         val player = Player()
         for (transform in response.transforms) {
             transform.apply(player)
         }
+        displayName?.let { player.displayName = it }
         player.newAccount = response.isNewAccount()
         player.worldType = response.worldType
         player.applyConfigTransforms(spawn, response.firstVisitToWorldType)
@@ -154,17 +175,19 @@ constructor(
         coords = spawn
         xpRate = realm.config.baseXpRate
         newAccount = true
+        tutorialStage = TUTORIAL_COMPLETE
     }
 
     /** Game thread. */
     private fun enterWorld(
         player: Player,
         response: AccountLoadResponse.Ok,
+        profile: BotProfile?,
         callback: (Result) -> Unit,
     ) {
         val name = response.account.accountName.lowercase()
         try {
-            val result = register(player)
+            val result = register(player, profile)
             if (result is Result.Failed) {
                 logger.warn { "Bot login failed: $name (${result.reason})" }
             }
@@ -178,7 +201,7 @@ constructor(
         }
     }
 
-    private fun register(player: Player): Result {
+    private fun register(player: Player, profile: BotProfile?): Result {
         if (playerRegistry.isOnline(player.userId)) {
             return Result.Failed("already online")
         }
@@ -199,6 +222,9 @@ constructor(
             service.infoProtocols.dealloc(infos)
             return Result.Failed("could not register player ($register)")
         }
+        profile?.apply(player)
+        BotProfile.repairBankTabs(player)
+        spawner.look(player.username).apply(player)
         eventBus.publish(SessionStateEvent.Login(player))
         eventBus.publish(SessionStateEvent.EngineLogin(player))
         return Result.Ok(player)
@@ -226,4 +252,9 @@ constructor(
         trim().split(Regex(" +")).joinToString(" ") { word ->
             word.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
         }
+
+    companion object {
+        const val NAME_TAKEN = "name taken"
+        private const val TUTORIAL_COMPLETE = 1000
+    }
 }

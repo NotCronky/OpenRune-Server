@@ -182,25 +182,168 @@ Login/logout listener review:
 - Autosave: bots are autosaved like players, which we want because they're real accounts.
 - Gameplay `onPlayerLogin` listeners (timers, quests, settings): should run for bots.
 
-### M2: Random accounts and population
+### M2: Random accounts and population ✅
 - `BotSpawner` with the archetypes above; appearance and name generation.
 - `PopulationManager`: target online count, staggered logins/logouts.
+
+Status:
+- [x] `playerbots/pack`: `dbtable.playerbot_kit` (gear, ammo and food by role; requirements
+  come from each obj's `statreq` params; quest-locked gear left out until M7) and
+  `dbtable.playerbot_spawns` (weighted bank/town tiles). Ids: dbtables 54900–54901, dbrows
+  54000–54127, in `src/main/resources/gamevals.toml`.
+- [x] `spawn/`: `BotNames` (word lists in resources), `BotArchetype`, `BotProfile` (applies
+  stats, worn, inv, bank), `BotSpawner` (rolls a profile + spawn tile), `BotLook`.
+- [x] `BotLogin.login(name, spawn, profile)`: with a profile the account must be new; an existing
+  one fails as `BotLogin.NAME_TAKEN` and the caller rolls another name. The profile is applied in
+  `register()` after `playerRegistry.add` (invs exist from `Initialize`) and before `Login`. The
+  generated name keeps its casing as the display name.
+- [x] Appearance isn't saved by the account pipeline (for anyone, real players included), so a
+  bot's look comes from `BotSpawner.look(accountName)`: a `DefaultGameRandom` seeded from the
+  name, applied on every login. Same name, same look, nothing to store.
+- [x] `PopulationManager` (driven from `GameLifecycle.StartCycle`): one login started per tick,
+  at most 4 loading at once; offline bot accounts are reused before new ones are rolled; each
+  bot it logs in gets a 30 min–3 h session, after which it logs out and is replaced; above the
+  target, up to 2 bots log out per tick, earliest session end first.
+- [x] Commands: `::bot spawn <n>` (roll n new accounts, staggered), `::bot population <n|off>`
+  (target online count; no argument shows it). `::bot list` shows the target.
+- [x] Verified: 20 spawned accounts logged in over ~70 ticks with no errors. The mix included a
+  maxed main (cb 120), mid mains, pures, low-levels, level-3 skillers (e.g. 41 Woodcutting) and
+  fresh accounts, with varied names, body types, gear and spawn tiles. After a restart, stats,
+  worn, inventory, coords and display name came back; the look matched across two restarts.
+- Not done: tests for `PopulationManager` (the module has no test setup yet).
 - **Done when:** `::bot spawn 20` creates a believable mix of accounts that persist across
   restarts.
 
-### M3: Brain, actions and the first activity
+### M3: Brain, actions and the first activity ✅
 - Action layer (walk, op loc/npc/obj/held item, bank, resume dialogue) on top of `BotClient`.
 - Brain/goal/task framework; `Wander` and `Idle` goals; canned public chat.
 - First skill loop: woodcutting + banking around Lumbridge/Draynor.
 - **Done when:** bots chop, bank and wander for an hour unattended without getting stuck.
 
+Status:
+- [x] `brain/BotActions`: walk (`MoveGameClick`), op loc (`OpLocV2`), interface button
+  (`If3Button`), close modal (`CloseModal`, Escape), public chat (`MessagePublic`). Everything a
+  bot does is a real client message through the normal handlers.
+- [x] `brain/BotWorld`: loc scan around a tile (per zone), walkability checks.
+- [x] `brain/BotBrain` + `BotBrains`: one brain per online bot, made on `Login`, dropped on
+  `Delete`, thought about every tick from `GameLifecycle.StartCycle`. A bot re-decides every
+  1–3 ticks, with a 4% chance of a 5–15 tick distraction. Long walks go in hops of at most 14
+  tiles so each stays inside the route finder's search area. Any modal the current goal doesn't
+  own is closed (dialogue answering comes with quests in M7).
+- [x] Goals: `IdleGoal`, `WanderGoal` (a few walks around where the bot logged in),
+  `WoodcuttingGoal`. The picker weighs woodcutting 60 (when the bot is near a spot and has an
+  axe, carried or banked), wander 25, idle 15.
+- [x] Woodcutting: `dbtable.playerbot_woodcutting_spots` (Draynor, Varrock West, Edgeville with
+  banks; Lumbridge drops). Trees are any `content.tree` loc the bot has the level for, usually
+  the best tier, one of the 4 nearest so bots spread out. Full loads are banked at the nearest
+  `content.bank_booth` (deposit all, withdraw an axe again if it went in) or, at a no-bank spot,
+  dropped in one go. Unreachable trees are skipped after 4 tries; a bot standing still for 40
+  thinks gives up the goal. Sessions last 10–60 minutes.
+- [x] Canned chat: `resources/playerbots/chat/idle.txt`, each bot with its own chattiness.
+- [x] `BotSpawner` gives 75% of new accounts the best F2P axe they can use (kit role `axe`),
+  carried 40% of the time, otherwise in the bank.
+- [x] Fixed in M2's profile code: items put straight into a bot's bank now grow
+  `varbit.bank_tab_main`, and every bot login repairs it. Without it the bank's withdraw path
+  threw and kicked the bot.
+- [x] `::bot status <name>` shows a bot's goal, tile and whether it's busy.- [x] Soak: 18 fresh bots (12 at Draynor, 6 at Lumbridge) ran 51 minutes unattended with no
+  errors and none logged out or stuck. Draynor woodcutters each banked 160–350 logs and spread
+  over the willows; the Lumbridge ones power-chopped; wanderers stayed near where they logged in.
+- Not done: tests for the brain/goal state machines (the module has no test setup yet).
+- [x] Fixed: some bots chopped without facing their tree. rsprot only re-sends a stored face
+  angle to observers that have seen the player before, so a client that first saw a bot
+  mid-chop drew it facing south. A bot standing at a loc it's interacting with now faces it
+  again every 8 ticks (`BotBrain.refreshFacing`). Real players still have this; fixing it for
+  them means a change in `RspCycle` or rsprot.
+
 ### M4: Basic combat
 - Chickens/cows/goblins: attack style choice, eat, loot, bury bones, flee on low HP, re-gear
   after death.
 
+Status (core loop verified in a live client; no long soak yet):
+- [x] `playerbots/pack`: `dbtable.playerbot_combat_spots` (Fred's chickens, the east-farm
+  chickens, the east cow field and the goblins east of the river, with the bot combat range each
+  suits; centres picked from the npc spawn data) and `dbtable.playerbot_combat_loot` (bones are
+  buried; coins and feathers kept). Ids: dbtables 54903–54904, dbrows 54139–54145.
+- [x] Actions: attack (`OpNpcV2`, op looked up by the "Attack" text), take (`OpObjV2` op 3),
+  held-item options by name (`heldOp`: Eat, Bury, Wield/Wear, mapped to the inventory's
+  `If3Button` ops), combat-tab stance buttons.
+- [x] `BotWorld`: npc and ground-obj scans next to the loc scan.
+- [x] `CombatGoal`: wields carried gear first; stance for the lowest of Attack/Strength/Defence
+  (pures with Defence 1 skip Defence), rapid or accurate with a bow; targets are npcs of the
+  spot's name with an Attack op, not in combat with someone else, one of the 3 nearest; a target
+  that never gets into combat is skipped after 15 ticks. Buries bones, loots within 6 tiles,
+  picks up and re-wields its own ammo, stops when a bow runs out of ammo, and walks 12 tiles away
+  at 25% HP with no food (the goal ends).
+- [x] Eating is the brain's job, before any goal: below 40–60% HP (rolled per bot) a bot with
+  food eats, whatever it's doing.
+- [x] Goal picker: a weighted pick over what's available (woodcutting 60, combat 50, wander 25,
+  idle 15). Combat needs a spot for the bot's combat level within 90 tiles and at least 70% HP;
+  level-3 skillers (no combat stats, 10+ Woodcutting) never fight.
+- [x] Death: `BotDeathHook` (a `PlayerDeathCleanupHook`, bound in `PlayerbotsModule`) runs after
+  every respawn teleport and switches the bot to `RecoverGoal`, aimed at the tile the bot stood on
+  the tick before (it stands still while dying). Polling HP from the brain missed deaths with no
+  killing blow. `RecoverGoal`: wield what was kept, walk back, pick up the pile, wield it again;
+  gives up after 1,000 ticks or when stuck.
+- [x] Debug commands (admin): `::bot spawn <n> here` (roll accounts on your tile),
+  `::bot goal <name> <woodcutting|combat|wander|idle>` (force a goal the bot could pick now),
+  `::bot inv <name>`, `::bot hp <name> <n>` (lowers the HP stat; no hitsplat, so watching clients
+  don't see the bar change), `::bot kill <name>` (normal death sequence). `::bot status` shows HP
+  and combat level; long `::bot list` output is split under the 255-char message limit.
+- [x] Verified in a live client (Lumbridge goblins, east cows):
+  - ranged (Pete38, yew shortbow) and unarmed melee (Kev_9) fights; goblins die, bones are
+    picked up and buried, coins looted (5 → 45);
+  - eating outside combat (Pete38 at 15/42 ate a tuna mid-wander) and inside it (knight885 ate
+    all 4 bread as its HP was knocked down);
+  - fleeing (knight885, no food, 2/10 HP: walked ~16 tiles off, then wandered until healed);
+  - walking from the goblins to the east cow field;
+  - death → recovery (Pete38: respawned in Lumbridge, walked back, picked up axe, 10 tuna, logs,
+    coins, leather body, boots and 124 arrows, and wore all of it again).
+- Seen while testing: this realm's XP rate is high, so low bots level out of their spot's combat
+  range within minutes (Kev_9 went from combat 12 to 48 in about five minutes, with a level-up
+  firework on nearly every hit). Not a bot bug, but spots need wider ranges, or more spots, on a
+  boosted realm.
+- Not done: the stance button can't be confirmed from the client (punch looks the same in each
+  style); magic bots fight with their staff in melee (no runes, no autocast yet); no hour-long
+  soak yet.
+
 ### M5: More skills
 - Mining, fishing, cooking, firemaking, smithing, crafting, thieving, runecrafting, prayer,
   magic: each a goal script on top of the shared tasks.
+
+Status (gathering done and verified live; processing skills next):
+- [x] `GatheringGoal` replaces `WoodcuttingGoal`: one goal for any `GatheringSkill`
+  (`brain/gathering/`: `WoodcuttingSkill`, `MiningSkill`, `FishingSkill`). It walks to the
+  spot, works one of the 4 nearest targets of the best tier it can use (80% of the time), skips a
+  target that gives nothing after 4 tries, banks at the nearest booth (deposit all, then withdraw
+  tool and bait) or drops at a spot with no bank. Only what the bot didn't carry when the goal
+  started (minus tools and bait) is dropped, so food and coins are safe.
+- [x] `dbtable.playerbot_woodcutting_spots` became `dbtable.playerbot_gathering_spots` (same id,
+  54902) with a `skill` column. Mining: Varrock East (banks; rocks checked in a live client at
+  3281–3290, 3361–3370), Varrock West, Lumbridge Swamp, Rimmington. Fishing (spots taken from the
+  npc spawn data): Draynor (banks), Lumbridge river, Lumbridge Swamp, Barbarian Village, Musa
+  Point. New dbrows 54146–54167. The gameval merger doesn't remove a renamed symbol, so the old
+  `playerbot_woodcutting_spots=54902` line had to be deleted from `.data/gamevals/dbtable.rscm`
+  by hand before `buildCache` would run.
+- [x] Mining: any `content.rock` whose `dbtable.mining_rocks` level the bot meets; pickaxes via
+  the mining module's `findPickaxe` / `pickaxeLevelReq`.
+- [x] Fishing reads the fishing module's own tables: each spot type's op1/op3 method
+  (`fishing_spot_def`), the method's tool and bait (`fishing_method`) and the lowest level that
+  catches anything (`fishing_spot`). Gear checks and bank withdrawals only count methods offered
+  by the spots actually at the bot's spot, so a lobster pot doesn't count at Draynor.
+- [x] `BotBrain.busy` also counts a pending weak queue. Fishing runs its catch loop on one, so
+  without this the bot looked idle, re-clicked the spot every think and reset the catch timer.
+- [x] `BotSpawner`: the best axe, pickaxe and fishing tool (with its method's bait, from kit role
+  `fishing_bait`) the bot can use, each owned 75% of the time, carried 40% (else banked). Kit
+  dbrows for pickaxes, net, rods, lobster pot, harpoon, fishing bait and feathers.
+- [x] `::bot goal` takes `woodcutting|mining|fishing|combat|wander|idle`; `::bot status` shows
+  how the previous goal ended (`last: fishing at draynor: Failed`).
+- [x] Verified live: 4 bots mined at Varrock East (one carried a rune pickaxe, three fetched
+  theirs from Varrock East bank); a full load of iron ore was banked and the bot went back with
+  only its pickaxe. At Draynor bots netted shrimp, fetched a banked net, and a bot whose only
+  kit was a lobster pot was correctly refused.
+- Next: cooking (raw catch on a range or fire), firemaking (logs), smithing (ore at a furnace,
+  bars at an anvil), crafting, then thieving, prayer (bury bones from the bank), runecrafting and
+  magic.
 
 ### M6: World navigation
 - Waypoint graph with transitions; bots travel between towns and to any activity spot.
