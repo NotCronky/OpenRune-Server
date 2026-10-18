@@ -3,7 +3,6 @@ package org.rsmod.api.net.rsprot
 import dev.openrune.ServerCacheManager
 import dev.openrune.rscm.RSCM.asRSCM
 import dev.openrune.util.Wearpos
-import net.rsprot.protocol.api.Session
 import net.rsprot.protocol.game.outgoing.info.Infos
 import net.rsprot.protocol.game.outgoing.info.npcinfo.NpcInfoPacket
 import net.rsprot.protocol.game.outgoing.info.playerinfo.PlayerAvatarExtendedInfo
@@ -37,7 +36,7 @@ import org.rsmod.map.CoordGrid
 import org.rsmod.map.zone.ZoneKey
 
 class RspCycle(
-    private val session: Session<Player>,
+    private val queue: (OutgoingGameMessage) -> Unit,
     private val infos: Infos,
     private val regions: RegionRegistry,
 ) : ClientCycle {
@@ -81,7 +80,7 @@ class RspCycle(
 
     private fun Player.queueRebuildLogin() {
         val rebuild = RebuildLoginV2(x shr 3, z shr 3, worldId, playerInfo)
-        session.queue(rebuild)
+        queue(rebuild)
     }
 
     override fun update(player: Player) {
@@ -106,19 +105,19 @@ class RspCycle(
         val infoPackets = infos.getPackets()
         val rootPackets = infoPackets.rootWorldInfoPackets
 
-        session.queue(rootPackets.activeWorld)
-        session.queue(rootPackets.npcUpdateOrigin)
-        session.queuePacketResult(rootPackets.worldEntityInfo)
-        session.queuePacketResult(rootPackets.playerInfo)
-        session.queueNpcInfoPacket(rootPackets.npcInfo)
+        queue(rootPackets.activeWorld)
+        queue(rootPackets.npcUpdateOrigin)
+        queuePacketResult(rootPackets.worldEntityInfo)
+        queuePacketResult(rootPackets.playerInfo)
+        queueNpcInfoPacket(rootPackets.npcInfo)
 
         for (world in infoPackets.activeWorlds) {
-            session.queue(world.activeWorld)
-            session.queue(world.npcUpdateOrigin)
-            session.queueNpcInfoPacket(world.npcInfo)
+            queue(world.activeWorld)
+            queue(world.npcUpdateOrigin)
+            queueNpcInfoPacket(world.npcInfo)
         }
 
-        session.queue(rootPackets.activeWorld)
+        queue(rootPackets.activeWorld)
     }
 
     override fun release() {
@@ -133,13 +132,11 @@ class RspCycle(
         }
     }
 
-    private fun <T : OutgoingGameMessage> Session<Player>.queuePacketResult(
-        result: PacketResult<T>
-    ) {
+    private fun <T : OutgoingGameMessage> queuePacketResult(result: PacketResult<T>) {
         queue(result.getOrThrow())
     }
 
-    private fun Session<Player>.queueNpcInfoPacket(result: PacketResult<NpcInfoPacket>) {
+    private fun queueNpcInfoPacket(result: PacketResult<NpcInfoPacket>) {
         if (result.isEmpty()) {
             result.safeReleaseOrThrow()
             return
@@ -221,7 +218,7 @@ class RspCycle(
             knownBuildArea = buildArea
             knownRegionUid = null
             cachedRegionZoneProvider = null
-            session.queue(rebuild)
+            queue(rebuild)
             return
         }
 
@@ -244,7 +241,7 @@ class RspCycle(
         val rebuild = RebuildRegionV2(x shr 3, z shr 3, true, zoneProvider)
         knownBuildArea = buildArea
         cachedRegionZoneProvider = zoneProvider
-        session.queue(rebuild)
+        queue(rebuild)
     }
 
     private fun Player.syncNpcViewDistance() {

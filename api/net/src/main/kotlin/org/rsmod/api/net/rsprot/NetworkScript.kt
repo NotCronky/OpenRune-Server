@@ -143,7 +143,7 @@ constructor(
         val infos = service.infoProtocols.alloc(slot, OldSchoolClientType.DESKTOP)
 
         val client = RspClient(session, infos) as Client<Any, Any>
-        val cycle = RspCycle(session, infos, regionReg)
+        val cycle = RspCycle({ session.queue(it) }, infos, regionReg)
 
         player.client = client
         player.clientCycle = cycle
