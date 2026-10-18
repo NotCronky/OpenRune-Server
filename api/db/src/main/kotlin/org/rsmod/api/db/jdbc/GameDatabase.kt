@@ -24,6 +24,12 @@ constructor(
 
     private lateinit var connection: Connection
 
+    /**
+     * One connection is shared by the game, loader and saver threads. A commit from one thread ends
+     * the other's transaction and its `SET LOCAL search_path`, so transactions must not interleave.
+     */
+    private val transactionLock = Any()
+
     public fun connect(connector: GameConnection) {
         check(!::connection.isInitialized) { "Connection already initialized." }
         val config = configProvider.get()
@@ -67,20 +73,7 @@ constructor(
         block: (DatabaseConnection) -> T,
     ): T =
         withConnection { connection ->
-            val wrapped = DatabaseConnection(connection)
-            try {
-                applySchemaSearchPath(connection, schema)
-                val result = block(wrapped)
-                connection.commit()
-                result
-            } catch (t: Throwable) {
-                try {
-                    connection.rollback()
-                } catch (rollbackEx: Throwable) {
-                    throw DatabaseRollbackException(t, rollbackEx)
-                }
-                throw t
-            }
+            synchronized(transactionLock) { transaction(connection, schema, block) }
         }
 
     /** Blocking variant for the game thread (avoids [runBlocking] coroutine overhead). */
@@ -89,6 +82,14 @@ constructor(
         block: (DatabaseConnection) -> T,
     ): T {
         assertValidConnection()
+        return synchronized(transactionLock) { transaction(connection, schema, block) }
+    }
+
+    private fun <T> transaction(
+        connection: Connection,
+        schema: String?,
+        block: (DatabaseConnection) -> T,
+    ): T {
         try {
             val wrapped = DatabaseConnection(connection)
             applySchemaSearchPath(connection, schema)
